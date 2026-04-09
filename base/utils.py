@@ -21,7 +21,7 @@ def save_pickle(data, file_path):
 def compute_metrics(predictions, targets):
     """Compute classification metrics"""
     accuracy = accuracy_score(targets, predictions)
-    precision, recall, f1, _ = precision_recall_fscore_support(targets, predictions, average='weighted')
+    precision, recall, f1, _ = precision_recall_fscore_support(targets, predictions, average='macro', zero_division=0)
     cm = confusion_matrix(targets, predictions)
     
     return {

@@ -28,18 +28,74 @@ class ClassificationLoss(nn.Module):
         else:
             raise ValueError(f"Unsupported loss type: {loss_type}")
     
-    def forward(self, predictions, targets):
+    def forward(self, predictions, targets, sample_weights=None):
         """
         Forward pass
         
         Args:
             predictions: Model predictions [batch_size, num_classes]
             targets: Ground truth labels [batch_size]
+            sample_weights: Sample weights [batch_size] (optional)
             
         Returns:
             torch.Tensor: Loss value
         """
-        return self.criterion(predictions, targets)
+        if sample_weights is not None:
+            # 使用样本权重：先计算每个样本的loss，然后加权平均
+            if self.loss_type == 'cross_entropy':
+                # 使用reduction='none'计算每个样本的loss
+                loss_per_sample = F.cross_entropy(
+                    predictions, 
+                    targets, 
+                    reduction='none',
+                    weight=self.criterion.weight if hasattr(self.criterion, 'weight') and self.criterion.weight is not None else None
+                )
+                
+                # 检查是否有NaN或Inf
+                if torch.isnan(loss_per_sample).any() or torch.isinf(loss_per_sample).any():
+                    print(f"警告: loss_per_sample包含NaN或Inf")
+                    print(f"  predictions范围: [{predictions.min():.4f}, {predictions.max():.4f}]")
+                    print(f"  predictions包含NaN: {torch.isnan(predictions).any()}")
+                    print(f"  predictions包含Inf: {torch.isinf(predictions).any()}")
+                    print(f"  targets范围: [{targets.min()}, {targets.max()}]")
+                    print(f"  loss_per_sample包含NaN: {torch.isnan(loss_per_sample).sum()}个")
+                    print(f"  loss_per_sample包含Inf: {torch.isinf(loss_per_sample).sum()}个")
+                
+                # 检查sample_weights
+                if torch.isnan(sample_weights).any() or torch.isinf(sample_weights).any():
+                    print(f"警告: sample_weights包含NaN或Inf")
+                    sample_weights = torch.clamp(sample_weights, min=0.0, max=1e6)  # 限制范围
+                    sample_weights = torch.where(torch.isnan(sample_weights) | torch.isinf(sample_weights), 
+                                                torch.zeros_like(sample_weights), sample_weights)
+                
+                # 加权平均，避免除零
+                weights_sum = sample_weights.sum()
+                if weights_sum < 1e-8:
+                    print(f"警告: sample_weights.sum()={weights_sum:.6f}，使用平均loss")
+                    return loss_per_sample.mean()
+                
+                weighted_loss = (loss_per_sample * sample_weights).sum() / weights_sum
+                
+                # 检查最终loss
+                if torch.isnan(weighted_loss) or torch.isinf(weighted_loss):
+                    print(f"警告: weighted_loss是NaN或Inf，使用平均loss")
+                    return loss_per_sample.mean()
+                
+                return weighted_loss
+            else:
+                # 对于其他loss类型，也使用类似的方法
+                # 这里需要根据具体的loss类型来实现
+                loss_per_sample = self.criterion(predictions, targets)
+                if isinstance(loss_per_sample, torch.Tensor) and loss_per_sample.dim() == 0:
+                    # 如果loss是标量，说明不支持reduction='none'
+                    # 回退到不使用样本权重
+                    return loss_per_sample
+                else:
+                    weighted_loss = (loss_per_sample * sample_weights).sum() / sample_weights.sum()
+                    return weighted_loss
+        else:
+            # 没有样本权重，使用标准loss
+            return self.criterion(predictions, targets)
 
 
 class FocalLoss(nn.Module):

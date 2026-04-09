@@ -1,0 +1,334 @@
+"""
+主协调器 - 整合三层架构
+协调速度规划 -> MPC控制 -> CARLA交互的完整实验流程
+"""
+
+import os
+import time
+from typing import Dict, Optional, List
+import matplotlib.pyplot as plt
+
+from speed_planner import SpeedPlanner
+from mpc_controller import VehicleModel, MPCController, ControlSequenceGenerator
+from carla_interface import CarlaInterface
+
+
+class ExperimentConfig:
+    """实验配置类"""
+    
+    def __init__(self):
+        # 实验参数
+        self.experiment_id = "longitudinal_test"
+        self.duration = 300.0  # 秒
+        self.dt = 0.05  # 时间步长
+        
+        # 速度剖面参数
+        self.speed_profile_type = "longitudinal"  # "longitudinal" 或 "lateral"
+        
+        # 车辆参数
+        self.vehicle_mass = 1500.0
+        self.vehicle_model = "model3"
+        
+        # CARLA参数
+        self.map_name = "Town07"
+        self.carla_host = "localhost"
+        self.carla_port = 2000
+        
+        # MPC参数
+        self.mpc_horizon = 10
+        self.mpc_dt = 0.05
+        
+        # 扰动参数
+        self.bump_params = {
+            'start': 210,
+            'end': 300,
+            'freq': 0.5,
+            'amp': 0.4
+        }
+        
+        # 输出目录
+        self.output_dir = "./experiment_results"
+        
+    def to_dict(self) -> Dict:
+        """转换为字典"""
+        return {
+            'experiment_id': self.experiment_id,
+            'duration': self.duration,
+            'dt': self.dt,
+            'speed_profile_type': self.speed_profile_type,
+            'vehicle_mass': self.vehicle_mass,
+            'vehicle_model': self.vehicle_model,
+            'map_name': self.map_name,
+            'carla_host': self.carla_host,
+            'carla_port': self.carla_port,
+            'mpc_horizon': self.mpc_horizon,
+            'mpc_dt': self.mpc_dt,
+            'bump_params': self.bump_params,
+            'output_dir': self.output_dir
+        }
+
+
+class ExperimentOrchestrator:
+    """实验协调器"""
+    
+    def __init__(self, config: Optional[ExperimentConfig] = None):
+        self.config = config or ExperimentConfig()
+        
+        # 初始化组件
+        self.speed_planner = SpeedPlanner()
+        self.vehicle_model = VehicleModel(mass=self.config.vehicle_mass)
+        self.mpc_controller = MPCController(
+            self.vehicle_model, 
+            horizon=self.config.mpc_horizon, 
+            dt=self.config.mpc_dt
+        )
+        self.control_generator = ControlSequenceGenerator(self.vehicle_model, self.mpc_controller)
+        self.carla_interface = CarlaInterface(self.config.carla_host, self.config.carla_port)
+        
+        # 实验状态
+        self.experiment_running = False
+        self.results = {}
+        
+        # 创建输出目录
+        os.makedirs(self.config.output_dir, exist_ok=True)
+    
+    def run_complete_experiment(self) -> bool:
+        """运行完整的实验流程"""
+        try:
+            print("🚀 开始完整实验流程")
+            print(f"实验ID: {self.config.experiment_id}")
+            print(f"持续时间: {self.config.duration}s")
+            print(f"速度剖面类型: {self.config.speed_profile_type}")
+            
+            # 第1步：生成速度剖面
+            print("\n📊 第1步：生成速度剖面")
+            speed_profile = self._generate_speed_profile()
+            if speed_profile is None:
+                print("❌ 速度剖面生成失败")
+                return False
+            
+            # 验证速度剖面
+            is_valid, warnings, violation_info = self.speed_planner.validate_profile(speed_profile)
+            if not is_valid:
+                print("⚠️ 速度剖面验证失败:")
+                for warning in warnings:
+                    print(f"  - {warning}")
+            
+            # 第2步：生成控制序列
+            print("\n🎮 第2步：生成控制序列")
+            control_data = self._generate_control_sequence(speed_profile)
+            if control_data is None:
+                print("❌ 控制序列生成失败")
+                return False
+            
+            # 验证控制序列
+            is_valid, warnings = self.control_generator.validate_control_sequence(control_data)
+            if not is_valid:
+                print("⚠️ 控制序列验证失败:")
+                for warning in warnings:
+                    print(f"  - {warning}")
+            
+            # 第3步：运行CARLA实验
+            print("\n🚗 第3步：运行CARLA实验")
+            success = self._run_carla_experiment(control_data)
+            if not success:
+                print("❌ CARLA实验运行失败")
+                return False
+            
+            # 第4步：后处理和结果分析
+            print("\n📈 第4步：结果分析和可视化")
+            self._analyze_results(speed_profile, control_data)
+            
+            print("\n✅ 完整实验流程完成")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 实验流程失败: {e}")
+            return False
+        
+        finally:
+            self.cleanup()
+    
+    def _generate_speed_profile(self) -> Optional[Dict]:
+        """生成速度剖面"""
+        try:
+            if self.config.speed_profile_type == "longitudinal":
+                profile = self.speed_planner.generate_longitudinal_profile(
+                    duration=self.config.duration,
+                    dt=self.config.dt
+                )
+            elif self.config.speed_profile_type == "lateral":
+                profile = self.speed_planner.generate_lateral_profile(
+                    duration=self.config.duration,
+                    dt=self.config.dt
+                )
+            else:
+                raise ValueError(f"未知的速度剖面类型: {self.config.speed_profile_type}")
+            
+            print(f"✅ 速度剖面生成完成，包含 {len(profile['time'])} 个时间点")
+            return profile
+            
+        except Exception as e:
+            print(f"❌ 速度剖面生成失败: {e}")
+            return None
+    
+    def _generate_control_sequence(self, speed_profile: Dict) -> Optional[Dict]:
+        """生成控制序列"""
+        try:
+            control_data = self.control_generator.generate_control_sequence(speed_profile)
+            print(f"✅ 控制序列生成完成，包含 {len(control_data['control_sequence'])} 个控制点")
+            return control_data
+            
+        except Exception as e:
+            print(f"❌ 控制序列生成失败: {e}")
+            return None
+    
+    def _run_carla_experiment(self, control_data: Dict) -> bool:
+        """运行CARLA实验"""
+        try:
+            # 初始化CARLA环境
+            if not self.carla_interface.initialize(
+                map_name=self.config.map_name,
+                vehicle_model=self.config.vehicle_model
+            ):
+                return False
+            
+            # 运行实验
+            success = self.carla_interface.run_experiment(
+                control_data=control_data,
+                experiment_id=self.config.experiment_id,
+                duration=self.config.duration
+            )
+            
+            return success
+            
+        except Exception as e:
+            print(f"❌ CARLA实验运行失败: {e}")
+            return False
+    
+    def _analyze_results(self, speed_profile: Dict, control_data: Dict):
+        """分析和可视化结果"""
+        try:
+            # 生成分析图表
+            self._generate_analysis_plots(speed_profile, control_data)
+            
+            # 保存配置文件
+            self._save_config()
+            
+            print("✅ 结果分析完成")
+            
+        except Exception as e:
+            print(f"❌ 结果分析失败: {e}")
+    
+    def _generate_analysis_plots(self, speed_profile: Dict, control_data: Dict):
+        """生成分析图表"""
+        try:
+            # 创建图表目录
+            plots_dir = os.path.join(self.config.output_dir, "plots")
+            os.makedirs(plots_dir, exist_ok=True)
+            
+            # 重新验证速度剖面以获取违规信息
+            is_valid, warnings, violation_info = self.speed_planner.validate_profile(speed_profile)
+            
+            # 速度剖面图（包含违规点标记）
+            self.speed_planner.plot_speed_profile(
+                speed_profile, 
+                title=f"Speed Profile - {self.config.experiment_id}",
+                save_path=os.path.join(plots_dir, "speed_profile.png"),
+                violation_info=violation_info
+            )
+            
+            # 控制序列图
+            self.control_generator.plot_control_sequence(
+                control_data,
+                save_path=os.path.join(plots_dir, "control_sequence.png")
+            )
+            
+            print(f"📊 分析图表已保存到: {plots_dir}")
+            
+        except Exception as e:
+            print(f"❌ 图表生成失败: {e}")
+    
+    def _save_config(self):
+        """保存实验配置"""
+        try:
+            import json
+            
+            config_file = os.path.join(self.config.output_dir, "experiment_config.json")
+            with open(config_file, 'w') as f:
+                json.dump(self.config.to_dict(), f, indent=2)
+            
+            print(f"📋 实验配置已保存到: {config_file}")
+            
+        except Exception as e:
+            print(f"❌ 配置保存失败: {e}")
+    
+    def cleanup(self):
+        """清理资源"""
+        try:
+            self.carla_interface.cleanup()
+            print("🧹 资源清理完成")
+        except Exception as e:
+            print(f"❌ 资源清理失败: {e}")
+    
+    def run_multiple_experiments(self, experiment_configs: List[ExperimentConfig]) -> Dict[str, bool]:
+        """运行多个实验"""
+        results = {}
+        
+        for config in experiment_configs:
+            print(f"\n{'='*50}")
+            print(f"运行实验: {config.experiment_id}")
+            print(f"{'='*50}")
+            
+            # 更新配置
+            self.config = config
+            
+            # 运行实验
+            success = self.run_complete_experiment()
+            results[config.experiment_id] = success
+            
+            # 短暂休息
+            time.sleep(2)
+        
+        return results
+
+
+def create_longitudinal_experiment_config() -> ExperimentConfig:
+    """创建纵向实验配置"""
+    config = ExperimentConfig()
+    config.experiment_id = "longitudinal_enhanced"
+    config.speed_profile_type = "longitudinal"
+    config.duration = 300.0
+    config.map_name = "Town07"
+    return config
+
+
+def create_lateral_experiment_config() -> ExperimentConfig:
+    """创建横向实验配置"""
+    config = ExperimentConfig()
+    config.experiment_id = "lateral_enhanced"
+    config.speed_profile_type = "lateral"
+    config.duration = 300.0
+    config.map_name = "Town03"
+    return config
+
+
+if __name__ == "__main__":
+    # 创建实验配置
+    longitudinal_config = create_longitudinal_experiment_config()
+    
+    # 创建协调器并运行实验
+    orchestrator = ExperimentOrchestrator(longitudinal_config)
+    
+    # 运行单个实验
+    success = orchestrator.run_complete_experiment()
+    
+    if success:
+        print("\n🎉 实验成功完成！")
+    else:
+        print("\n💥 实验失败！")
+    
+    # 或者运行多个实验
+    # lateral_config = create_lateral_experiment_config()
+    # results = orchestrator.run_multiple_experiments([longitudinal_config, lateral_config])
+    # print(f"\n实验结果: {results}")

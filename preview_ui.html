@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>驾驶员状态监测系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes pulse-cyan { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        .animate-pulse-cyan { animation: pulse-cyan 2s infinite; }
+        .glow-cyan { filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.5)); }
+        .bg-grid {
+            background-image: linear-gradient(rgba(6, 182, 212, 0.05) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(6, 182, 212, 0.05) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+        @keyframes scan { from { background-position: 0 0; } to { background-position: 0 1000px; } }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0f1218; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+    </style>
+</head>
+<body class="bg-[#0a0c10] text-gray-100 font-sans h-screen overflow-hidden flex">
+
+    <!-- 左侧：示意图区域 -->
+    <div class="flex-1 relative border-r border-gray-800 flex items-center justify-center bg-grid">
+        <!-- 初始座舱视图 -->
+        <div id="cockpit-view" class="w-full h-full flex items-center justify-center p-12">
+            <div class="relative w-full max-w-3xl aspect-[16/10] bg-[#111827]/50 rounded-[3rem] border border-cyan-500/20 overflow-hidden shadow-[inset_0_0_50px_rgba(6,182,212,0.1)] flex items-center justify-center">
+                <div class="absolute inset-0 opacity-10 pointer-events-none" style="background: repeating-linear-gradient(0deg, #06b6d4 0px, transparent 1px, transparent 30px); animation: scan 10s linear infinite;"></div>
+                <svg viewBox="0 0 800 500" class="w-4/5 h-4/5 drop-shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+                    <path d="M150,50 L650,50 Q750,50 750,150 L750,350 Q750,450 650,450 L150,450 Q50,450 50,350 L50,150 Q50,50 150,50 Z" fill="none" stroke="#1f2937" stroke-width="2" />
+                    <path d="M180,70 L220,70 L220,430 L180,430 Z" fill="#1f2937" />
+                    <rect x="190" y="150" width="15" height="200" rx="2" fill="#06b6d4" class="animate-pulse" />
+                    <g><rect x="300" y="100" width="100" height="120" rx="15" fill="#1f2937" stroke="#374151" stroke-width="2" /><path d="M320,130 Q350,110 380,130 M320,160 Q350,140 380,160 M320,190 Q350,170 380,190" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round" class="animate-pulse" /></g>
+                    <g><rect x="300" y="280" width="100" height="120" rx="15" fill="#1f2937" stroke="#374151" stroke-width="2" /><path d="M320,310 Q350,290 380,310 M320,340 Q350,320 380,340 M320,370 Q350,350 380,370" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round" class="animate-pulse" /></g>
+                    <rect x="550" y="90" width="120" height="320" rx="20" fill="#1f2937" stroke="#374151" stroke-width="2" /><line x1="550" y1="250" x2="670" y2="250" stroke="#374151" stroke-width="2" />
+                </svg>
+                <div class="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                    <div class="text-cyan-500 font-bold tracking-[1em] text-sm mb-2 uppercase">Cockpit Perception</div>
+                    <div class="flex gap-4"><span class="text-[10px] text-gray-500 border border-gray-800 px-2 py-0.5 rounded uppercase">Sensors Active</span><span class="text-[10px] text-cyan-500 border border-cyan-500/30 px-2 py-0.5 rounded uppercase animate-pulse">Monitoring</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 舒适度仪表盘 -->
+        <div id="gauge-view" class="hidden w-full h-full flex items-center justify-center p-20 animate-in fade-in zoom-in duration-500">
+            <div id="gauge-container" class="relative w-96 h-96 flex items-center justify-center rounded-full transition-all duration-500">
+                <div class="absolute inset-4 rounded-full border border-gray-800/50 flex items-center justify-center">
+                    <div class="w-full h-full opacity-20" style="background: radial-gradient(circle, transparent 60%, rgba(6,182,212,0.1) 100%);"></div>
+                </div>
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#1f2937" stroke-width="6" stroke-dasharray="198 264" stroke-linecap="round"></circle>
+                    <circle id="gauge-progress" cx="50" cy="50" r="42" fill="none" stroke="#06b6d4" stroke-width="7" stroke-dasharray="0 264" stroke-linecap="round" class="transition-all duration-1000 ease-out"></circle>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <div class="text-gray-500 text-[10px] tracking-[0.4em] uppercase mb-1">Comfort Score</div>
+                    <span id="score-val" class="text-7xl font-black text-white transition-all duration-500">0.0</span>
+                    <div id="status-tag" class="mt-4 px-4 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-bold tracking-widest uppercase transition-all duration-500">Normal</div>
+                </div>
+                <div id="risk-overlay" class="absolute inset-0 rounded-full bg-red-600/20 opacity-0 transition-opacity duration-300 pointer-events-none"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧：功能操作区 -->
+    <div class="w-[450px] flex flex-col p-10 bg-[#0f1218] shadow-2xl z-10">
+        <h1 class="text-2xl font-bold tracking-[0.2em] text-cyan-400 mb-12 border-b border-cyan-900/50 pb-6 flex items-center gap-3">
+            <i data-lucide="shield-check" class="text-cyan-500"></i>
+            驾驶员状态监测
+        </h1>
+
+        <div id="comfort-card" class="group cursor-pointer p-8 rounded-2xl border border-gray-800 bg-gray-900/30 hover:border-cyan-500/50 transition-all duration-500">
+            <div class="flex items-center gap-5">
+                <div id="comfort-icon-bg" class="p-4 rounded-xl bg-gray-800 text-gray-500 group-hover:bg-cyan-500 group-hover:text-black transition-all"><i data-lucide="gauge"></i></div>
+                <div><h3 class="text-xl font-bold tracking-wide">舒适度监测</h3><p class="text-gray-500 text-sm mt-1 uppercase">Comfort Level</p></div>
+                <div id="active-dot" class="ml-auto w-3 h-3 rounded-full bg-gray-700"></div>
+            </div>
+        </div>
+
+        <div id="comfort-options" class="hidden mt-10 space-y-10 animate-in slide-in-from-top-4 duration-500">
+            <div class="flex bg-[#0a0c10] p-1.5 rounded-xl border border-gray-800">
+                <button onclick="setMode('realtime')" id="btn-realtime" class="flex-1 py-3 rounded-lg text-sm font-medium transition-all bg-cyan-600 text-white shadow-lg shadow-cyan-900/20">实时监测</button>
+                <button onclick="setMode('playback')" id="btn-playback" class="flex-1 py-3 rounded-lg text-sm font-medium transition-all text-gray-500 hover:text-gray-300">数据回放</button>
+            </div>
+
+            <div class="space-y-6">
+                <div class="group">
+                    <label class="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2 block">模型加载 (Model Selection)</label>
+                    <div class="flex gap-3">
+                        <input type="text" id="model-input" readonly placeholder="点击选择 .pkl 文件..." class="flex-1 bg-gray-900/50 border border-gray-800 rounded-lg px-5 py-3 text-sm text-gray-300 outline-none group-hover:border-gray-700 transition-all cursor-pointer" onclick="openFilePicker('model')">
+                        <button class="bg-gray-800 p-3 rounded-lg hover:bg-cyan-900/30 hover:text-cyan-400 border border-transparent hover:border-cyan-500/30 transition-all" onclick="openFilePicker('model')">
+                            <i data-lucide="file-code" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="data-input" class="hidden animate-in fade-in duration-300 space-y-4">
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2 block">数据加载 (Data Source)</label>
+                        <div class="flex gap-3">
+                            <input type="text" id="data-file-input" readonly placeholder="点击选择 BDF 数据..." class="flex-1 bg-gray-900/50 border border-gray-800 rounded-lg px-5 py-3 text-sm text-gray-300 outline-none cursor-pointer" onclick="openFilePicker('data')">
+                            <button class="bg-gray-800 p-3 rounded-lg hover:bg-cyan-900/30 hover:text-cyan-400 border border-transparent hover:border-cyan-500/30 transition-all" onclick="openFilePicker('data')">
+                                <i data-lucide="database" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2 block">起跑倒计时 (秒) — 与车端对齐</label>
+                        <input type="number" id="countdown-input" min="0" max="60" value="5" class="w-full bg-gray-900/50 border border-gray-800 rounded-lg px-5 py-3 text-sm text-gray-300 outline-none focus:border-cyan-500/50 transition-all" placeholder="5">
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-6">
+                <!-- 进度条合并到按钮本身：按钮不可点击时用背景填充显示进度 -->
+                <button id="main-action-btn" onclick="toggleExecution()" class="relative overflow-hidden w-full py-5 rounded-2xl bg-cyan-500 text-black font-black tracking-[0.3em] hover:bg-cyan-400 active:scale-95 transition-all shadow-[0_0_40px_rgba(6,182,212,0.2)] flex items-center justify-center gap-3">
+                    <div id="btn-progress-fill" class="absolute inset-y-0 left-0 w-0 bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-500 opacity-90"></div>
+                    <span id="btn-label" class="relative z-10">确认部署</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件选择模态框 -->
+    <div id="file-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-10">
+        <div class="bg-[#0f1218] w-full max-w-2xl rounded-3xl border border-gray-800 flex flex-col max-h-[80vh]">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center">
+                <h2 class="text-xl font-bold text-cyan-400 flex items-center gap-3"><i data-lucide="folder-open"></i> 文件浏览器</h2>
+                <button onclick="closeFilePicker()" class="text-gray-500 hover:text-white"><i data-lucide="x"></i></button>
+            </div>
+            <div id="file-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                <!-- 文件列表动态生成 -->
+            </div>
+            <div class="p-4 border-t border-gray-800 text-[10px] text-gray-600 uppercase tracking-widest">
+                当前路径: <span id="current-path" class="text-gray-400">.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="hidden fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl border border-cyan-500/30 bg-[#0f1218]/90 text-cyan-200 shadow-[0_0_30px_rgba(6,182,212,0.15)]">
+        <span id="toast-text" class="text-sm tracking-wide"></span>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        let currentMode = 'realtime', isActivated = false, isRunning = false, ws = null;
+        let pickingType = 'model'; // 'model' or 'data'
+
+        const comfortCard = document.getElementById('comfort-card'), comfortOptions = document.getElementById('comfort-options');
+        const cockpitView = document.getElementById('cockpit-view'), gaugeView = document.getElementById('gauge-view');
+        const activeDot = document.getElementById('active-dot'), iconBg = document.getElementById('comfort-icon-bg');
+        const actionBtn = document.getElementById('main-action-btn'), progressCircle = document.getElementById('gauge-progress');
+        const scoreText = document.getElementById('score-val'), statusTag = document.getElementById('status-tag');
+        const riskOverlay = document.getElementById('risk-overlay'), gaugeContainer = document.getElementById('gauge-container');
+        const btnFill = document.getElementById('btn-progress-fill');
+        const btnLabel = document.getElementById('btn-label');
+        const toast = document.getElementById('toast');
+        const toastText = document.getElementById('toast-text');
+
+        // 统一管理按钮样式，避免切换模式时 class 覆盖导致布局/定位异常
+        const BTN_BASE = 'relative overflow-hidden w-full py-5 rounded-2xl font-black tracking-[0.3em] transition-all shadow-[0_0_40px_rgba(6,182,212,0.2)] flex items-center justify-center gap-3';
+        const BTN_REALTIME_READY = BTN_BASE + ' bg-cyan-500 text-black hover:bg-cyan-400 active:scale-95';
+        const BTN_PLAYBACK_READY = BTN_BASE + ' bg-indigo-600 text-white hover:bg-indigo-500 active:scale-95 shadow-[0_0_40px_rgba(79,70,229,0.2)]';
+        // 回放中：底色灰暗禁用，只靠填充层显示进度
+        const BTN_DISABLED = BTN_BASE + ' bg-gray-900 text-gray-200 cursor-not-allowed';
+
+        comfortCard.onclick = () => {
+            if (isActivated) return; isActivated = true;
+            comfortCard.classList.add('border-cyan-500', 'bg-cyan-950/20');
+            comfortOptions.classList.remove('hidden'); cockpitView.classList.add('hidden'); gaugeView.classList.remove('hidden');
+            activeDot.classList.replace('bg-gray-700', 'bg-cyan-500'); activeDot.classList.add('animate-pulse-cyan');
+            iconBg.classList.replace('bg-gray-800', 'bg-cyan-500'); iconBg.classList.replace('text-gray-500', 'text-black');
+        };
+
+        function setMode(mode) {
+            currentMode = mode; isRunning = false; if(ws) ws.close();
+            const btnRealtime = document.getElementById('btn-realtime'), btnPlayback = document.getElementById('btn-playback'), dataInput = document.getElementById('data-input');
+            if (mode === 'realtime') {
+                btnRealtime.className = 'flex-1 py-3 rounded-lg text-sm font-medium transition-all bg-cyan-600 text-white shadow-lg shadow-cyan-900/20';
+                btnPlayback.className = 'flex-1 py-3 rounded-lg text-sm font-medium transition-all text-gray-500 hover:text-gray-300';
+                dataInput.classList.add('hidden');
+                btnLabel.innerText = '确认部署';
+                btnFill.style.width = '0%';
+                actionBtn.className = BTN_REALTIME_READY;
+            } else {
+                btnPlayback.className = 'flex-1 py-3 rounded-lg text-sm font-medium transition-all bg-cyan-600 text-white shadow-lg shadow-cyan-900/20';
+                btnRealtime.className = 'flex-1 py-3 rounded-lg text-sm font-medium transition-all text-gray-500 hover:text-gray-300';
+                dataInput.classList.remove('hidden');
+                btnLabel.innerText = '开始回放';
+                btnFill.style.width = '0%';
+                actionBtn.className = BTN_PLAYBACK_READY;
+            }
+        }
+
+        async function toggleExecution() {
+            if (isRunning) return;
+            const modelPath = document.getElementById('model-input').value;
+            if (!modelPath) return alert("请先选择模型文件！");
+            const bdfPath = document.getElementById('data-file-input').value;
+            if (currentMode === 'playback' && !bdfPath) return alert("请先选择 BDF 数据文件！");
+
+            const config = {
+                checkpoint_path: modelPath,
+                normalization_stats_path: "data/training_dataset_random/mean_std_info.pkl",
+                use_original_data: currentMode === 'playback',
+                subject_id: "zzh", map_id: "01",
+                bdf_path: currentMode === 'playback' ? bdfPath : null
+            };
+
+            try {
+                const resp = await fetch('/api/configure', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+
+                // 车端对齐：前端点击开始回放时，下发 start 信号（车端轮询 /api/start）
+                // 倒计时由输入框设置，服务端用 start_at = now + countdown 与车端同时起跑
+                if (currentMode === 'playback') {
+                    const countdownEl = document.getElementById('countdown-input');
+                    const countdownSec = Math.max(0, Math.min(60, parseInt(countdownEl?.value || '5', 10) || 5));
+                    const startResp = await fetch('/api/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ countdown_sec: countdownSec })
+                    });
+                    if (!startResp.ok) throw new Error(await startResp.text());
+                    const startData = await startResp.json();
+                    showToast(`已下发开始指令（倒计时 ${startData.countdown_sec}s，与车端对齐）`);
+                }
+
+                if (ws) ws.close();
+                const wsUrl = (location.origin.replace('http://', 'ws://').replace('https://', 'wss://')) + '/ws/comfort';
+                ws = new WebSocket(wsUrl);
+                ws.onopen = () => {
+                    isRunning = true;
+                    btnLabel.innerText = currentMode === 'realtime' ? '正在监测...' : '回放中';
+                    if (currentMode === 'playback') {
+                        // 回放中：底色灰暗禁用，仅靠填充层显示进度
+                        actionBtn.className = BTN_DISABLED;
+                        btnFill.style.width = '0%';
+                    } else {
+                        // 实时监测：也禁用点击，但不显示进度填充
+                        actionBtn.className = BTN_DISABLED;
+                    }
+                };
+                ws.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
+                    // ✅ 关键修复：只有 prediction 事件才更新仪表盘 score，progress 事件只更新进度条
+                    if (data.event === 'finished') {
+                        // 回放结束：toast + 归零 + 进度条满
+                        updateGauge(0.0);
+                        btnFill.style.width = '100%';
+                        showToast('回放结束');
+                        // 允许重新开始
+                        if (ws) ws.close();
+                        return;
+                    }
+                    // 只有 prediction 事件才更新仪表盘（避免 progress 事件覆盖为 0）
+                    if (data.event === 'prediction' && data.score !== undefined) {
+                        updateGauge(data.score);
+                    }
+                    // progress 事件只更新进度条，不更新仪表盘
+                    if (data.event === 'progress' && typeof data.progress === 'number' && currentMode === 'playback') {
+                        const pct = Math.max(0, Math.min(100, data.progress * 100));
+                        btnFill.style.width = pct.toFixed(1) + '%';
+                    }
+                    // 可选：在控制台确认链路
+                    console.log("[WS] event:", data.event, data.event === 'prediction' ? `score=${data.score}` : `progress=${data.progress}`);
+                };
+                ws.onclose = () => {
+                    isRunning = false;
+                    btnLabel.innerText = currentMode === 'realtime' ? '确认部署' : '开始回放';
+                    // 恢复可点击样式
+                    actionBtn.className = currentMode === 'realtime' ? BTN_REALTIME_READY : BTN_PLAYBACK_READY;
+                };
+            } catch (err) { alert("启动失败: " + err.message); }
+        }
+
+        function updateGauge(score) {
+            score = parseFloat(score); scoreText.innerText = score.toFixed(1);
+            const length = (score / 4) * 198; progressCircle.setAttribute('stroke-dasharray', `${length} 264`);
+            if (score < 1.5) {
+                progressCircle.setAttribute('stroke', '#06b6d4'); statusTag.innerText = 'Normal';
+                statusTag.className = 'mt-4 px-4 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-bold tracking-widest uppercase';
+                riskOverlay.style.opacity = '0'; gaugeContainer.classList.remove('animate-pulse');
+            } else if (score < 2.5) {
+                progressCircle.setAttribute('stroke', '#f59e0b'); statusTag.innerText = 'Mild Discomfort';
+                statusTag.className = 'mt-4 px-4 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 text-xs font-bold tracking-widest uppercase';
+                riskOverlay.style.opacity = '0'; gaugeContainer.classList.remove('animate-pulse');
+            } else {
+                progressCircle.setAttribute('stroke', '#ef4444'); statusTag.innerText = 'High Risk Alert';
+                statusTag.className = 'mt-4 px-4 py-1 rounded-full bg-red-500/20 border border-red-500/50 text-red-500 text-xs font-bold tracking-widest uppercase';
+                riskOverlay.style.opacity = '1'; gaugeContainer.classList.add('animate-pulse');
+            }
+        }
+
+        function showToast(msg) {
+            toastText.innerText = msg;
+            toast.classList.remove('hidden');
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.classList.add('hidden'), 200);
+            }, 1800);
+        }
+
+        // 文件浏览器逻辑
+        async function openFilePicker(type) {
+            pickingType = type;
+            document.getElementById('file-modal').classList.remove('hidden');
+            await loadDir(".");
+        }
+
+        function closeFilePicker() { document.getElementById('file-modal').classList.add('hidden'); }
+
+        async function loadDir(path) {
+            const ext = pickingType === 'model' ? '.pkl' : '.bdf';
+            try {
+                const resp = await fetch(`/api/list-files?path=${encodeURIComponent(path)}&ext=${ext}`);
+                const data = await resp.json();
+                const list = document.getElementById('file-list');
+                document.getElementById('current-path').innerText = data.current_path;
+                list.innerHTML = "";
+
+                // 添加返回上一级
+                if (data.current_path !== ".") {
+                    const parent = data.current_path.split('/').slice(0, -1).join('/') || ".";
+                    const item = document.createElement('div');
+                    item.className = "flex items-center gap-3 p-4 hover:bg-cyan-900/20 cursor-pointer rounded-xl text-gray-400";
+                    item.innerHTML = `<i data-lucide="corner-left-up"></i> <span>.. (返回上一级)</span>`;
+                    item.onclick = () => loadDir(parent);
+                    list.appendChild(item);
+                }
+
+                data.items.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = "flex items-center gap-3 p-4 hover:bg-cyan-900/20 cursor-pointer rounded-xl transition-all";
+                    const icon = item.is_dir ? "folder" : "file";
+                    div.innerHTML = `<i data-lucide="${icon}" class="${item.is_dir ? 'text-cyan-500' : 'text-gray-400'}"></i> <span class="${item.is_dir ? 'font-bold' : ''}">${item.name}</span>`;
+                    div.onclick = () => {
+                        if (item.is_dir) loadDir(item.path);
+                        else selectFile(item.path);
+                    };
+                    list.appendChild(div);
+                });
+                lucide.createIcons();
+            } catch (err) { alert("读取目录失败: " + err.message); }
+        }
+
+        function selectFile(path) {
+            if (pickingType === 'model') document.getElementById('model-input').value = path;
+            else document.getElementById('data-file-input').value = path;
+            closeFilePicker();
+        }
+    </script>
+</body>
+</html>
